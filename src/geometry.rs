@@ -76,6 +76,10 @@ impl Edge{
         }
         false
     }
+
+    fn intersect(&self, e : &Edge) -> bool{
+        false
+    }
 }
 
 struct Triangle{v1: Point, v2: Point, v3: Point}
@@ -94,14 +98,22 @@ trait GraphLike{
     fn as_edge(&self, e:&[usize;2]) -> Edge;
 }
 
-
-struct VisibilityGraph{
-    vertices : Vec<Point>,
-    edges : Vec<[usize;2]>,
-    real_indices : Vec<usize>, //indexes the real edges inside edges. 
+trait VisibilityGraphLike{
+    fn visible(&self,i : usize) -> Vec<usize>;
+    fn add_edge(&mut self,e : [usize;2]);
+    //fn promote_edge(&mut self, i: usize);
 }
 
-impl GraphLike for VisibilityGraph{
+#[derive(Clone)]
+struct PartialCycleGraph{
+    vertices : Vec<Point>,
+    edges : Vec<[usize;2]>,
+    visibility_edges : Vec<[usize;2]>,
+    real_indices : Vec<usize>,
+    cycle : Vec<usize>,
+}
+
+impl GraphLike for PartialCycleGraph{
     fn as_edge(&self, e:&[usize;2]) -> Edge{
         Edge{
             v1: self.vertices[e[0]].clone(),
@@ -110,25 +122,52 @@ impl GraphLike for VisibilityGraph{
     }
 }
 
-
-fn num_simp_ham(g : PartialCycle) -> Integer {
-    //Calculates the number of crossing-free hamiltonian cycles
-    //for a given list of points in general position. 
-
-    let mut result = 0;
-    for (i,v) in g.vertices.iter().enumerate(){
-        if g.cycle.contains(i){continue}; //cycle stored as a list of indices
-        let test_edge = g.vertices[i].subtract(g.cycle[-1]);
-        
+impl VisibilityGraphLike for PartialCycleGraph{
+    fn visible(&self,i:usize) -> Vec<usize>{
+        //Returns all the vertices that are visible from the vertex i. 
+        let mut to_return = vec![];
+        for e in &self.visibility_edges{
+            match e{
+                [i,x] => to_return.push(*x),
+                [x,i] => to_return.push(*x),
+            }
+        }
+        to_return
     }
 
-    Integer::new()
+    fn add_edge(&mut self,e : [usize;2]){
+        //Add this edge as a real edge. 
+        self.edges.push(e);
+        let mut to_remove = vec![];
+        for (i,f) in self.visibility_edges.iter().enumerate(){
+            if self.as_edge(&e).intersect(&self.as_edge(f)){
+                to_remove.push(i);
+            }
+        }
+        to_remove.reverse();
+        for i in to_remove.iter(){
+            self.visibility_edges.remove(*i);
+        }
+    }
 }
 
 
-// struct InducedTriangulation{
-//     points : Vec<Point>,
-//     //realIndices : Vec<usize>, //which of the points are "actually there"? 
-//     n : usize, //The first n points are real, the rest are fake. 
-//     triangles : Vec<[usize;3]>, //store the indices, due to ownership stuff
-// }
+
+fn num_simp_ham(g : PartialCycleGraph) -> usize {
+    //Calculates the number of crossing-free hamiltonian cycles
+    //for a given list of points in general position. 
+    //This counts all the cycles twice, but who cares; I do!
+
+    if g.cycle.len() == g.vertices.len(){
+        return 1;
+    }
+
+    let mut result = 0;
+    for i in g.visible(*g.cycle.last().unwrap()){ //Loop over vertices that I can see from the endpoint
+        if g.cycle.contains(&i){continue}; //cycle stored as a list of indices
+        let mut temp_g = g.clone(); //This is expensive and bad, but too bad!
+        temp_g.add_edge([*g.cycle.last().unwrap(),i]);
+        result += num_simp_ham(temp_g);
+    }
+    result
+}
