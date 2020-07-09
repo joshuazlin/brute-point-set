@@ -41,6 +41,13 @@ impl Vect2D{
     }
 }
 
+fn xor_option(a : Option<bool>, b : Option<bool>) -> Option<bool>{
+    match (a,b){
+        (Some(x),Some(y)) => Some(x^y),
+        _ => None,
+    }
+}
+
 #[derive(Clone)]
 struct Edge{v1 : Point, v2 : Point}
 
@@ -78,6 +85,23 @@ impl Edge{
     }
 
     fn intersect(&self, e : &Edge) -> bool{
+        let o1 = self.orient_point(&e.v1);
+        let o2 = self.orient_point(&e.v2);
+        let o = xor_option(o1,o2);
+        
+        let u1 = e.orient_point(&self.v1);
+        let u2 = e.orient_point(&self.v2);
+        let u = xor_option(u1,u2);
+
+        if o == Some(false){return false;}
+        if u == Some(false){return false;}
+        if xor_option(o,u) == Some(false){return true;}
+
+        if o1 == None{if self.contains_point(&e.v1){return true;}}
+        if o2 == None{if self.contains_point(&e.v2){return true;}}
+        if u1 == None{if e.contains_point(&self.v1){return true;}}
+        if u2 == None{if e.contains_point(&self.v2){return true;}}
+
         false
     }
 }
@@ -94,13 +118,18 @@ impl Triangle{
     }
 }
 
-trait GraphLike{
+trait PointSet{
+    fn vertices(&self) -> Vec<Point>;
+}
+
+trait GraphLike : PointSet{
     fn as_edge(&self, e:&[usize;2]) -> Edge;
 }
 
-trait VisibilityGraphLike{
+trait VisibilityGraphLike : GraphLike{
     fn visible(&self,i : usize) -> Vec<usize>;
     fn add_edge(&mut self,e : [usize;2]);
+    fn add_vertex(&mut self, v : Point);
     //fn promote_edge(&mut self, i: usize);
 }
 
@@ -109,8 +138,24 @@ struct PartialCycleGraph{
     vertices : Vec<Point>,
     edges : Vec<[usize;2]>,
     visibility_edges : Vec<[usize;2]>,
-    real_indices : Vec<usize>,
     cycle : Vec<usize>,
+}
+
+impl PartialCycleGraph{
+    fn new() -> PartialCycleGraph{
+        PartialCycleGraph{
+            vertices : vec![],
+            edges: vec![],
+            visibility_edges : vec![],
+            cycle : vec![],
+        }
+    }
+}
+
+impl PointSet for PartialCycleGraph{
+    fn vertices(&self) -> Vec<Point>{
+        self.vertices
+    }
 }
 
 impl GraphLike for PartialCycleGraph{
@@ -149,8 +194,18 @@ impl VisibilityGraphLike for PartialCycleGraph{
             self.visibility_edges.remove(*i);
         }
     }
-}
 
+    fn add_vertex(&mut self, v : Point){
+        self.vertices.push(v);
+        let i = self.vertices.len()-1;
+        for j in 0..self.vertices.len(){
+            let temp_edge = self.as_edge(&[i,j]);
+            if !self.edges.iter().map(|e|self.as_edge(e).intersect(&temp_edge)).collect::<Vec<bool>>().contains(&true){
+                self.visibility_edges.push([i,j]);
+            }
+        }
+    }
+}
 
 
 fn num_simp_ham(g : PartialCycleGraph) -> usize {
@@ -171,3 +226,21 @@ fn num_simp_ham(g : PartialCycleGraph) -> usize {
     }
     result
 }
+
+// trait Triangulated : PointSet{
+//     fn triangles(&self) -> Vec<Triangle>,
+// }
+
+// struct Triangulation{
+//     vertices : Vec<Point>,
+//     triangles : Vec<[usize;3]>,
+// }
+
+// impl Triangulation{
+//     fn to_pcg(&self) -> PartialCycleGraph{
+//         let mut g = PartialCycleGraph::new();
+
+//         g
+//     }
+// }
+// Maybe triangulation should be a trait too?!?!
