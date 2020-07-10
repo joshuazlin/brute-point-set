@@ -3,6 +3,43 @@ use std::env;
 use rug::{Rational, Integer};
 
 mod geometry;
+use geometry::*;
+
+struct PartialCycleGraph{
+    vg : VisibilityGraph,
+    cycle : Vec<usize>,
+}
+
+impl PartialCycleGraph{
+    fn vertices(&self) -> Vec<Point>{
+        self.vg.vertices()
+    }
+
+    fn edges(&self) -> Vec<[usize;2]>{
+        self.vg.edges()
+    }
+
+}
+
+fn num_simp_ham(pcg : PartialCycleGraph) -> usize {
+    //Calculates the number of crossing-free hamiltonian cycles
+    //for a given list of points in general position. 
+    //This counts all the cycles twice, but who cares; I do!
+
+    if pcg.cycle.len() == pcg.vertices().len(){
+        return 1;
+    }
+
+    let mut result = 0;
+    for i in pcg.visible(*pcg.cycle.last().unwrap()){ //Loop over vertices that I can see from the endpoint
+        if pcg.cycle.contains(&i){continue}; //cycle stored as a list of indices
+        let mut temp_g = pcg.clone(); //This is expensive and bad, but too bad!
+        temp_g.add_edge([*pcg.cycle.last().unwrap(),i]);
+        result += num_simp_ham(temp_g);
+    }
+    result
+}
+
 
 fn main() {
     

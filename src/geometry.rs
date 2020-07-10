@@ -4,8 +4,55 @@ Hopefully implements arbitrary precision rational geometry in 2D.
 
 use rug::{Rational, Integer};
 
+/*
+Here are the global functions
+*/
+fn xor_option(a : Option<bool>, b : Option<bool>) -> Option<bool>{
+    match (a,b){
+        (Some(x),Some(y)) => Some(x^y),
+        _ => None,
+    }
+}
+
+/*Two by two matrices*/
+struct Matrix2{a : [[Rational;2];2]}
+
+impl Matrix2{
+    fn det(&self) -> Rational{
+        self.a[0][0]*self.a[1][1] - self.a[0][1]*self.a[1][0]
+    }
+
+    fn scale(&self, x : &Rational) -> Matrix2{
+        Matrix2{
+            a : [[self.a[0][0]*x,self.a[0][1]*x],
+                 [self.a[1][0]*x,self.a[1][1]*x]]
+        }
+    }
+
+    fn inverse(&self) -> Option<Matrix2>{
+        let d = self.det();
+        if d == Rational::from(0){return None;}
+        let inv = Matrix2{
+            a : [[self.a[1][1],-self.a[1][0]],
+                 [-self.a[0][1],self.a[0][0]]]
+        };
+        inv.scale(&(Rational::from(1)/d));
+        return Some(inv)
+    }
+
+    fn apply(&self, v : Vect2D) -> Vect2D{
+        Vect2D{
+            x : self.a[0][0]*v.x+self.a[0][1]*v.y,
+            y : self.a[1][0]*v.x+self.a[1][1]*v.y,
+        }
+    }
+}
+
+/*
+A point struct, lives in 2D. 
+*/
 #[derive(Clone)]
-struct Point{x: Rational, y : Rational}
+pub struct Point{x: Rational, y : Rational}
 
 impl Point{
     fn subtract(&self,p : &Point) -> Vect2D{
@@ -23,6 +70,10 @@ impl Point{
     }
 }
 
+
+/*
+A 2D-vector struct. 
+*/
 #[derive(Clone)]
 struct Vect2D{x : Rational, y : Rational}
 impl Vect2D{
@@ -39,15 +90,18 @@ impl Vect2D{
     fn norm(&self) -> Rational{
         self.dot(self)
     }
-}
 
-fn xor_option(a : Option<bool>, b : Option<bool>) -> Option<bool>{
-    match (a,b){
-        (Some(x),Some(y)) => Some(x^y),
-        _ => None,
+    fn as_point(&self) -> Point{
+        Point{
+            x : self.x,
+            y : self.y,
+        }
     }
 }
 
+/*
+An Edge struct. 
+*/
 #[derive(Clone)]
 struct Edge{v1 : Point, v2 : Point}
 
@@ -84,6 +138,14 @@ impl Edge{
         false
     }
 
+    fn line_contains_point(&self, p : &Point) -> bool{
+        //Does the line which extends from this edge contain the point? 
+        match self.orient_point(p){
+            None => true,
+            Some(x) => false,
+        }
+    }
+
     fn intersect(&self, e : &Edge) -> bool{
         let o1 = self.orient_point(&e.v1);
         let o2 = self.orient_point(&e.v2);
@@ -104,8 +166,37 @@ impl Edge{
 
         false
     }
+
+    fn line_equation(&self) -> [Rational;3]{
+        //a x + b y + c = 0, 
+        [self.v2.x-self.v1.x,
+         self.v1.y-self.v2.y,
+         self.v1.x*(self.v1.x-self.v2.x)+self.v1.y*(self.v2.y-self.v1.y)]
+    }
+
+    fn intersection_point(&self, e: &Edge) -> Option<Point>{
+        //returns the intersection point of the two *lines* 
+        //I'd feel bad about writing a line struct though... it feels wrong. 
+        let l1 = self.line_equation();
+        let l2 = e.line_equation();
+        let M = Matrix2{
+            a : [[l1[0],l1[1]],
+                 [l2[0],l2[1]]]
+        }.inverse();
+        let v = Vect2D{
+            x : l1[2],
+            y : l2[2],
+        };
+        match M{
+            None => None,
+            Some(N) => Some(N.apply(v).as_point()),
+        }
+    }
 }
 
+/*
+A Triangle struct. 
+*/
 struct Triangle{v1: Point, v2: Point, v3: Point}
 
 impl Triangle{
@@ -118,47 +209,15 @@ impl Triangle{
     }
 }
 
-trait PointSet{
-    fn vertices(&self) -> Vec<Point>;
+
+/*
+A set of points struct
+*/
+pub struct PointSet{
+    pub vertices : Vec<Point>,
 }
 
-trait GraphLike : PointSet{
-    fn as_edge(&self, e:&[usize;2]) -> Edge;
-}
-
-trait VisibilityGraphLike : GraphLike{
-    fn visible(&self,i : usize) -> Vec<usize>;
-    fn add_edge(&mut self,e : [usize;2]);
-    fn add_vertex(&mut self, v : Point);
-    //fn promote_edge(&mut self, i: usize);
-}
-
-#[derive(Clone)]
-struct PartialCycleGraph{
-    vertices : Vec<Point>,
-    edges : Vec<[usize;2]>,
-    visibility_edges : Vec<[usize;2]>,
-    cycle : Vec<usize>,
-}
-
-impl PartialCycleGraph{
-    fn new() -> PartialCycleGraph{
-        PartialCycleGraph{
-            vertices : vec![],
-            edges: vec![],
-            visibility_edges : vec![],
-            cycle : vec![],
-        }
-    }
-}
-
-impl PointSet for PartialCycleGraph{
-    fn vertices(&self) -> Vec<Point>{
-        self.vertices
-    }
-}
-
-impl GraphLike for PartialCycleGraph{
+impl PointSet{
     fn as_edge(&self, e:&[usize;2]) -> Edge{
         Edge{
             v1: self.vertices[e[0]].clone(),
@@ -167,80 +226,211 @@ impl GraphLike for PartialCycleGraph{
     }
 }
 
-impl VisibilityGraphLike for PartialCycleGraph{
-    fn visible(&self,i:usize) -> Vec<usize>{
-        //Returns all the vertices that are visible from the vertex i. 
-        let mut to_return = vec![];
-        for e in &self.visibility_edges{
-            match e{
-                [i,x] => to_return.push(*x),
-                [x,i] => to_return.push(*x),
-            }
-        }
-        to_return
+/*
+A struct for graphs?
+*/
+struct Graph{
+    pub ps : PointSet,
+    pub edges : Vec<[usize;2]>,
+}
+
+impl Graph{
+    //Somehow I need to pass things up or something? this is dumb 
+    fn vertices(&self) -> Vec<Point>{
+        self.ps.vertices
+    }
+}
+
+/*
+A struct for Visibility Graphs??
+*/
+pub struct VisibilityGraph{
+    pub g : Graph,
+    pub vis_edges : Vec<[usize;2]>,
+}
+
+impl VisibilityGraph{
+
+    pub fn vertices(&self) -> Vec<Point>{
+        self.g.vertices()
     }
 
-    fn add_edge(&mut self,e : [usize;2]){
+    pub fn edges(&self) -> Vec<[usize;2]>{
+        self.g.edges
+    }
+
+    pub fn add_edge(&self, e:[usize;2]){
         //Add this edge as a real edge. 
-        self.edges.push(e);
+        self.g.edges.push(e);
         let mut to_remove = vec![];
-        for (i,f) in self.visibility_edges.iter().enumerate(){
-            if self.as_edge(&e).intersect(&self.as_edge(f)){
+        for (i,f) in self.vis_edges.iter().enumerate(){
+            if self.g.ps.as_edge(&e).intersect(&self.g.ps.as_edge(f)){
                 to_remove.push(i);
             }
         }
         to_remove.reverse();
         for i in to_remove.iter(){
-            self.visibility_edges.remove(*i);
+            self.vis_edges.remove(*i);
         }
     }
 
-    fn add_vertex(&mut self, v : Point){
-        self.vertices.push(v);
-        let i = self.vertices.len()-1;
-        for j in 0..self.vertices.len(){
-            let temp_edge = self.as_edge(&[i,j]);
-            if !self.edges.iter().map(|e|self.as_edge(e).intersect(&temp_edge)).collect::<Vec<bool>>().contains(&true){
-                self.visibility_edges.push([i,j]);
-            }
-        }
-    }
 }
 
 
-fn num_simp_ham(g : PartialCycleGraph) -> usize {
-    //Calculates the number of crossing-free hamiltonian cycles
-    //for a given list of points in general position. 
-    //This counts all the cycles twice, but who cares; I do!
 
-    if g.cycle.len() == g.vertices.len(){
-        return 1;
-    }
 
-    let mut result = 0;
-    for i in g.visible(*g.cycle.last().unwrap()){ //Loop over vertices that I can see from the endpoint
-        if g.cycle.contains(&i){continue}; //cycle stored as a list of indices
-        let mut temp_g = g.clone(); //This is expensive and bad, but too bad!
-        temp_g.add_edge([*g.cycle.last().unwrap(),i]);
-        result += num_simp_ham(temp_g);
-    }
-    result
-}
 
-// trait Triangulated : PointSet{
-//     fn triangles(&self) -> Vec<Triangle>,
+
+// /*
+// Here are a bunch of Traits
+// */
+// trait PointSet{
+//     fn vertices(&self) -> Vec<Point>;
+//     fn as_edge(&self, e:&[usize;2]) -> Edge;
+//     fn is_generic(&self, v : &Point) -> bool; //is v generic with respect to self. 
 // }
 
-// struct Triangulation{
+// trait VisibilityGraphLike : PointSet{
+//     fn visible(&self,i : usize) -> Vec<usize>;
+//     fn add_edge(&mut self,e : [usize;2]);
+//     fn add_vertex(&mut self, v : Point);
+// }
+
+// /*
+// Here is the data structure we are working with mainly, which is just a visibility graph
+// but it remembers a "cycle" that it's trying to build up. 
+
+// I think the triangulation should be a struct that floats on top. YOOOO that actually makes some sense I think
+// */
+// #[derive(Clone)]
+// struct PartialCycleGraph{
 //     vertices : Vec<Point>,
-//     triangles : Vec<[usize;3]>,
+//     edges : Vec<[usize;2]>,
+//     visibility_edges : Vec<[usize;2]>,
+//     cycle : Vec<usize>,
 // }
 
-// impl Triangulation{
-//     fn to_pcg(&self) -> PartialCycleGraph{
-//         let mut g = PartialCycleGraph::new();
-
-//         g
+// impl PartialCycleGraph{
+//     fn new() -> PartialCycleGraph{
+//         PartialCycleGraph{
+//             vertices : vec![],
+//             edges: vec![],
+//             visibility_edges : vec![],
+//             cycle : vec![],
+//         }
 //     }
 // }
-// Maybe triangulation should be a trait too?!?!
+
+// impl PointSet for PartialCycleGraph{
+//     fn vertices(&self) -> Vec<Point>{
+//         self.vertices
+//     }
+
+//     fn as_edge(&self, e:&[usize;2]) -> Edge{
+//         Edge{
+//             v1: self.vertices[e[0]].clone(),
+//             v2: self.vertices[e[1]].clone(),
+//         }
+//     }
+
+//     fn is_generic(&self, v : &Point) -> bool{
+//         //Is it enough to demand that it isn't on any of the existing lines? who knows
+//         //well for now, that's what we are going to do
+
+//         // !(0..self.vertices.len()).map(|i| 
+//         //     (i+1..self.vertices.len()).map(|j| 
+//         //         self.as_edge(&[i,j]).line_contains_point(v)
+//         //     ).collect::<Vec<bool>>().contains(&true)
+//         // ).collect::<Vec<bool>>().contains(&true)
+
+//         //Also need to check that it isn't parallel to anything... sad emoji reacts only
+//         //Really, we just need to check that every new edge intersects every other in exactly one place? 
+//     }
+// }
+
+// impl VisibilityGraphLike for PartialCycleGraph{
+//     fn visible(&self,i:usize) -> Vec<usize>{
+//         //Returns all the vertices that are visible from the vertex i. 
+//         let mut to_return = vec![];
+//         for e in &self.visibility_edges{
+//             match e{
+//                 [i,x] => to_return.push(*x),
+//                 [x,i] => to_return.push(*x),
+//             }
+//         }
+//         to_return
+//     }
+
+//     fn add_edge(&mut self,e : [usize;2]){
+//         //Add this edge as a real edge. 
+//         self.edges.push(e);
+//         let mut to_remove = vec![];
+//         for (i,f) in self.visibility_edges.iter().enumerate(){
+//             if self.as_edge(&e).intersect(&self.as_edge(f)){
+//                 to_remove.push(i);
+//             }
+//         }
+//         to_remove.reverse();
+//         for i in to_remove.iter(){
+//             self.visibility_edges.remove(*i);
+//         }
+//     }
+
+//     fn add_vertex(&mut self, v : Point){
+//         self.vertices.push(v);
+//         let i = self.vertices.len()-1;
+//         for j in 0..self.vertices.len(){
+//             let temp_edge = self.as_edge(&[i,j]);
+//             if !self.edges.iter().map(|e|self.as_edge(e).intersect(&temp_edge)).collect::<Vec<bool>>().contains(&true){
+//                 self.visibility_edges.push([i,j]);
+//             }
+//         }
+//     }
+// }
+
+// /*
+// here's a triangulation struct that floats on top. It is the max-triangulation
+// induced by the points of g; (so connect all the possible edges, and the 
+// intersections are considered points too). We don't care about the faces on the 
+// outside of g, if that makes sense. 
+// */
+// struct MaxTriangulation{
+//     g : Box<dyn PointSet>, //bruh... I have no idea what this means
+//     intersections : Vec<Point>, //includes all the points of g?
+//     triangles : Vec<[usize;3]>, //indexes the intersections I guess
+// }
+
+// impl MaxTriangulation{
+//     fn add_vertex(&self, v : Point, i : Option<usize>){
+//         //gonna assume for now that v lives in triangle i because I'm lazy
+//         if let Some(j) = i{
+//             let t = self.triangles[j]; //Do I have to copy stuff? brain slow
+//             self.triangles.remove(j);
+//             self.g.vertices().push(v);
+//             let l = self.g.vertices().len()-1;
+
+//             self.triangles.push([t[0],t[1],l]);
+//             self.triangles.push([t[1],t[2],l]);
+//             self.triangles.push([t[2],t[0],l]);
+//         }
+//     }
+
+//     fn as_triangle(&self, i : [usize;3]) -> Triangle{
+//         Triangle{
+//             v1: self.g.vertices()[i[0]],
+//             v2: self.g.vertices()[i[1]],
+//             v3: self.g.vertices()[i[2]],
+//         }
+//     }
+
+//     fn find_generic_point(&self, i:usize){
+//         //For triangle i, finds a generic point inside the triangle. 
+//         let t = self.triangles[i];
+//         let tr = self.as_triangle(t);
+//     }
+// }
+
+
+
+
+
